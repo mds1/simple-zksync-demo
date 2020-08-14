@@ -20,7 +20,9 @@
       zkSync Demo
     </h1>
     <p class="figure-caption">
-      You are connected to <span class="font-weight-bold">{{ network }}</span> with
+      You are connected to
+      <span class="font-weight-bold" :class="{ red: network === 'mainnet' }">{{ network }}</span>
+      with
       <span class="font-weight-bold">{{ userAddress }}</span>
     </p>
     <h3 class="mt-4">Instructions</h3>
@@ -29,10 +31,11 @@
         This will work on mainnet and Rinkeby, so make sure to select the desired network
       </p>
       <p>
-        The Cart section below mimics a simple Gitcoin Grants cart with two items. All amounts are
-        currently hardcoded for simplicity. All you need to do is enter two different addresses in
-        the right-most column and click the Checkout button. This will start the zkSync checkout
-        flow.
+        The Cart section below mimics a simple Gitcoin Grants cart with two items. The Recipient
+        Dashboard section below that represents the experience for grant owners to withdraw their
+        funds back to L1. All amounts are currently hardcoded for simplicity. All you need to do is
+        enter two different addresses in the right-most column and click the Checkout button. This
+        will start the zkSync checkout flow.
       </p>
 
       <p>
@@ -40,12 +43,14 @@
       </p>
       <ul>
         <li>
-          Enter other addresses from your MetaMask wallet as the recipient addresses. This will let
-          you test the withdrawal flow as well (once implemented)
+          Enter addresses from your MetaMask wallet as the recipient addresses. This will let you
+          test the withdrawal flow as well (once implemented)
         </li>
         <li>Please refresh the page if you change the MetaMask address</li>
         <li>
-          Open the console to watch status updates, otherwise it will look like nothing is happening
+          Open the console to watch status updates, otherwise it will look like nothing is
+          happening. This was done to reduce development time for this POC. In reality, events will
+          be reflected in the Gitcoin UI
         </li>
         <li>
           Use <a href="https://github.com/mds1/simple-zksync-demo" target="_blank">zkScan</a> to
@@ -63,6 +68,9 @@
 
     <!-- CART -->
     <h3 class="mt-5">Cart</h3>
+    <p class="mb-5">
+      This section is intended to mimic the actual Gitcoin Grants cart checkout flow
+    </p>
 
     <!-- Item 2 -->
     <div class="row justify-content-center align-items-center my-3">
@@ -112,31 +120,57 @@
     </button>
 
     <!-- ACCOUNT SUMMARY -->
-    <div v-if="false" class="container mt-5">
-      <h3>Dashboard</h3>
-      <p>Tracks data for the various accounts shown</p>
+    <div class="container" style="border-top: 1px solid rgba(0, 0, 0, 0.2); height: 1px;" />
+    <div class="container mt-5">
+      <h3>Recipient Dashboard</h3>
+      <p class="mb-4">This section contains the aspects important to grant owners</p>
 
       <div class="row justify-content-center align-items-center my-3">
         <!-- User's current wallet -->
-        <div class="col-auto mx-2 my-2 data-card">
+        <div class="col-6 mx-2 my-2 data-card">
           <h5>Selected Web3 Account</h5>
           <p class="address">{{ userAddress }}</p>
-          <p v-if="syncAccountState">
-            Committed balance: {{ formatEther(syncAccountState.committed.balances.ETH) }} ETH
-          </p>
+          <button v-if="!syncAccountState" class="btn btn-primary mt-3" @click="loginToZkSync">
+            Log in to zkSync
+          </button>
+          <div v-else>
+            <div class="row justify-content-center text-left">
+              <div class="col-4">
+                Committed balance:
+              </div>
+              <div class="col-auto">
+                {{ formatEther(syncAccountState.committed.balances.ETH) }} ETH
+              </div>
+            </div>
+            <div class="row justify-content-center text-left">
+              <div class="col-4">
+                Verified balance:
+              </div>
+              <div class="col-auto">
+                {{ formatEther(syncAccountState.verified.balances.ETH) }} ETH
+              </div>
+            </div>
+            <button class="btn btn-primary mt-3" @click="withdrawVerifiedBalance">
+              Withdraw Full Verified Balance
+            </button>
+          </div>
         </div>
+      </div>
 
-        <!-- Input address 1 -->
-        <div class="col-auto mx-2 my-2 data-card">
-          <h5>Test Grant 1 Address</h5>
-          <p class="address">{{ donations[0].recipientAddress || 'No recipient entered' }}</p>
-        </div>
-
-        <!-- Input address 2 -->
-        <div class="col-auto mx-2 my-2 data-card">
-          <h5>Test Grant 2 Address</h5>
-          <p class="address">{{ donations[0].recipientAddress || 'No recipient entered' }}</p>
-        </div>
+      <div v-if="syncAccountState" class="figure-caption text-left mb-5">
+        Some notes and definitions:
+        <ul>
+          <li>
+            Committed balance is the last state known to the zkSync network. This can be ahead of
+            the verified state
+          </li>
+          <li>Verified balance is proved with a zero-knowledge proof on the Ethereum network</li>
+          <li>
+            Committed and verified balances are not additive. In other words, if committed balance
+            is 1 ETH and verified balance is 0.75 ETH, then you have 0.25 ETH that is committed but
+            not yet verified
+          </li>
+        </ul>
       </div>
     </div>
     <!-- END ACCOUNT SUMMARY -->
@@ -218,6 +252,43 @@ export default {
       this.showAlert = false;
     },
 
+    async loginToZkSync() {
+      // Login
+      // OPTION 1
+      console.log('Waiting for user to sign the prompt to log in...');
+      this.syncWallet = await this.zksync.Wallet.fromEthSigner(this.signer, this.syncProvider);
+      console.log(
+        '✅ Login complete. Sync wallet generated from web3 account. View wallet:',
+        this.syncWallet
+      );
+
+      // // OPTION 2
+      // const ephemeralSigner = await this.zksync.Wallet.fromEthSigner(
+      //   this.getEphemeralWallet(),
+      //   this.syncProvider
+      // );
+      //
+      // this.syncWallet = await this.zksync.Wallet.fromEthSigner(
+      //   this.signer,
+      //   this.syncProvider,
+      //   ephemeralSigner,
+      //   undefined,
+      //   'EthereumSignature'
+      // );
+
+      // Get latest zkSync state
+      await this.getZkSyncAcountState();
+      console.log(
+        '✅ Latest sync state fetched for sync wallet. View state:',
+        this.syncAccountState
+      );
+    },
+
+    async getZkSyncAcountState() {
+      // Get nonce and all token balances
+      this.syncAccountState = await this.syncWallet.getAccountState();
+    },
+
     createEphemeralWallet() {
       const ephemeralWallet = new ethers.Wallet.createRandom();
       window.localStorage.setItem('ephemeral-mnemonic', ephemeralWallet.mnemonic.phrase);
@@ -252,11 +323,6 @@ export default {
       }
     },
 
-    async getZkSyncAcountState() {
-      // Get nonce and all token balances
-      this.syncAccountState = await this.syncWallet.getAccountState();
-    },
-
     async checkout() {
       try {
         console.log('Begin checkout process');
@@ -278,36 +344,9 @@ export default {
           this.getEphemeralWalletAddress()
         );
 
-        // Sign in and update state ----------------------------------------------------------------
-
-        // OPTION 1
-        console.log('Waiting for user to sign the prompt to log in...');
-        this.syncWallet = await this.zksync.Wallet.fromEthSigner(this.signer, this.syncProvider);
-        console.log(
-          '✅ Login complete. Sync wallet generated from web3 account. View wallet:',
-          this.syncWallet
-        );
-
-        // // OPTION 2
-        // const ephemeralSigner = await this.zksync.Wallet.fromEthSigner(
-        //   this.getEphemeralWallet(),
-        //   this.syncProvider
-        // );
-        //
-        // this.syncWallet = await this.zksync.Wallet.fromEthSigner(
-        //   this.signer,
-        //   this.syncProvider,
-        //   ephemeralSigner,
-        //   undefined,
-        //   'EthereumSignature'
-        // );
-
-        // Get latest zkSync state
-        await this.getZkSyncAcountState();
-        console.log(
-          '✅ Latest sync state fetched for sync wallet. View state:',
-          this.syncAccountState
-        );
+        // Log in and update state ----------------------------------------------------------------
+        // Log in
+        await this.loginToZkSync();
 
         // Token approvals -------------------------------------------------------------------------
         // None at the moment since we're only using ETH for now
@@ -411,11 +450,38 @@ export default {
         this.handleError(e);
       }
     },
+
+    async withdrawVerifiedBalance() {
+      console.log('Withdraw back to Ethereum started');
+      console.log(`Sending funds to ${this.userAddress}`);
+      const amount = ethers.BigNumber.from(this.syncAccountState.verified.balances.ETH);
+      console.log('amount: ', amount);
+      const fee = await this.syncProvider.getTransactionFee('Withdraw', this.userAddress, 'ETH');
+      console.log('Using fee of:', fee);
+      const withdraw = await this.syncWallet.withdrawFromSyncToEthereum({
+        ethAddress: this.userAddress,
+        token: 'ETH',
+        amount: amount.sub(fee.totalFee),
+        fee: fee.totalFee,
+      });
+      console.log('✅ Withdraw sent to network. View details:', withdraw);
+      console.log(
+        'Assets will be withdrawn to the specified address after the zero-knowledge proof of the zkSync block with this operation is generated and verified by the mainnet contract. You may check the above transaction hash to see when this is completed. We will optimistically assume this will succeed, and it can take up to 15 minutes.'
+      );
+      // Commented out since this does not seem to work
+      // console.log('Waiting for verification...');
+      // await withdraw.awaitVerifyReceipt();
+      console.log('✅✅✅ Withdraw complete!');
+    },
   },
 };
 </script>
 
 <style scoped>
+.red {
+  color: red;
+}
+
 .data-card {
   border: 1px solid rgba(0, 0, 0, 0.2);
   padding: 2rem;
