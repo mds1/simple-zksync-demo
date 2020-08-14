@@ -10,6 +10,7 @@
   "dependencies": {
     "core-js": "^3.6.5",
     "ethers": "^5.0.8",
+    "prettier": "^2.0.5",
     "vue": "^2.6.11",
     "zksync": "^0.6.0"
   },
