@@ -74,7 +74,7 @@ export default {
 
   watch: {
     // whenever targetAddress changes, make sure to save it in local storage
-    targetAddress: async function(val) {
+    targetAddress: async function (val) {
       try {
         const checksummedAddress = await ethers.utils.getAddress(val);
         window.localStorage.setItem('target-address', checksummedAddress);

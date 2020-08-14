@@ -26,9 +26,9 @@ Everything in this section is triggered when the user clicks the checkout button
    2. If false, user has never used zkSync and must register their signing key.
       ```javascript
       // Set the signing key
-      const changePubkeyTx = await this.syncWallet.setSigningKey()
+      const changePubkeyTx = await this.syncWallet.setSigningKey();
       // Wait for the zkSync transaction to be committed
-      await changePubkeyTx.awaitReceipt()
+      await changePubkeyTx.awaitReceipt();
       ```
 3. Use `const accountState = await this.syncWallet.getAccountState()` to get a list of all tokens/balances the user has on zkSync
 
@@ -37,33 +37,39 @@ At this point the user can now deposit funds into zkSync.
 ### Deposit Funds
 
 1. Look in local storage for an ephemeral wallet
+
    1. If one is there, TODO. Throw error?
    2. If one is not there, generate an ephemeral wallet and save it to local storage
+
    ```javascript
    // Generate random wallet and save it to local storage
-   const ephemeralWallet = new ethers.Wallet.createRandom()
-   const ephemeralWalletAddress = ephemeralWallet.address
+   const ephemeralWallet = new ethers.Wallet.createRandom();
+   const ephemeralWalletAddress = ephemeralWallet.address;
    localStorage.setItem('ephemeral-mnemonic', ephemeralWallet.mnemonic.phrase);
-   // Initialize corresponding zkSync account
-   const syncEphemeralWallet = await zksync.Wallet.fromEthSigner(ephemeralWallet, syncProvider)
-   // Set the signing key. Because this is a new wallet, this step is always required
-   const changeEphemeralPubkeyTx = await this.syncWallet.setSigningKey() 
-   await changeEphemeralPubkeyTx.awaitReceipt()
-
    ```
+
 2. Handle token approvals the same way they are currently handled
 3. After the final one call deposit to zkSync (sample code only handles case when 1 currency is deposited)
    ```javascript
    const deposit = await syncWallet.depositToSyncFromEthereum({
      depositTo: ephemeralWalletAddress, // if user only has 1 donation in cart, enter grant address here
-     token: 'ETH', 
+     token: 'ETH',
      amount: totalAmountThatWasApproved,
    });
-   const txHash = deposit.ethTx.hash // L1 tx hash, i.e. view on etherscan.io
+   const txHash = deposit.ethTx.hash; // L1 tx hash, i.e. view on etherscan.io
    ```
-3. At this point we can watch the transaction and show a dialog that says "X/10 confirmations"
-   1. For now, we start by requiring that the user cannot leave the page
-4. Send off each transaction based on the user's cart
+4. At this point we wait for the deposit receipt. Afterwards, we can set the signing key
+   ```javascript
+   // Wait for receipt
+   const depositReceipt = await deposit.awaitReceipt();
+   // Initialize corresponding zkSync account
+   const syncEphemeralWallet = await zksync.Wallet.fromEthSigner(ephemeralWallet, syncProvider);
+   // Set the signing key. Because this is a new wallet, this step is always required
+   const changeEphemeralPubkeyTx = await this.syncWallet.setSigningKey();
+   await changeEphemeralPubkeyTx.awaitReceipt();
+   ```
+5. Send off each transaction based on the user's cart
+
    ```javascript
    // Loop through each donation and transfer
    // Because there are n donations and n transaction hashes, we may want to link
@@ -81,11 +87,11 @@ At this point the user can now deposit funds into zkSync.
      const transfer = await this.syncWallet.syncTransfer({
         to: donations[i].recipentAddress,
         token: 'ETH',
-        amount,
+        amount: amount - fee,
         fee,
       });
       const txHash = transfer.txHash; // L2 tx hash, i.e. view on zkscan.io
-      
+
       // Check transfer status
       const transferReceipt = await transfer.awaitReceipt();
    }
@@ -96,7 +102,7 @@ At this point the user can now deposit funds into zkSync.
 
 Done!
 
-In this deposit flow, it is important to note that Gitcoin (more specifically, 
+In this deposit flow, it is important to note that Gitcoin (more specifically,
 the frontend) temporarily has full control over where funds go after once
 they are transferred to the ephemeral wallet
 

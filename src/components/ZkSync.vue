@@ -24,21 +24,46 @@
       <span class="font-weight-bold">{{ userAddress }}</span>
     </p>
     <h3 class="mt-4">Instructions</h3>
-    <p style="font-weight: bold; color: red;">
-      This will work on mainnet and Rinkeby, so make sure to select the desired network
-    </p>
-    <p class="container text-left">
-      The Cart section below mimics a simple Gitcoin Grants cart with two items. All amounts are
-      currently hardcoded for simplicity. All you need to do is enter two different addresses in the
-      right-most column and click the Checkout button. This will start the zkSync checkout flow.
-      <br /><br />
-      It is recommended to enter other addresses from your MetaMask wallet as the recipient
-      addresses. This will let you test the withdrawal flow as well.
-    </p>
+    <div class="container text-left mb-5">
+      <p class="text-center" style="font-weight: bold; color: red;">
+        This will work on mainnet and Rinkeby, so make sure to select the desired network
+      </p>
+      <p>
+        The Cart section below mimics a simple Gitcoin Grants cart with two items. All amounts are
+        currently hardcoded for simplicity. All you need to do is enter two different addresses in
+        the right-most column and click the Checkout button. This will start the zkSync checkout
+        flow.
+      </p>
 
-    <h3 class="mt-5">Cart</h3>
+      <p>
+        Suggestions for using this app:
+      </p>
+      <ul>
+        <li>
+          Enter other addresses from your MetaMask wallet as the recipient addresses. This will let
+          you test the withdrawal flow as well (once implemented)
+        </li>
+        <li>Please refresh the page if you change the MetaMask address</li>
+        <li>
+          Open the console to watch status updates, otherwise it will look like nothing is happening
+        </li>
+        <li>
+          Use <a href="https://github.com/mds1/simple-zksync-demo" target="_blank">zkScan</a> to
+          view transactions in the block explorer. You can get transactions hashes by expanding
+          variables logged to the console
+        </li>
+        <li>
+          View the source code
+          <a href="https://github.com/mds1/simple-zksync-demo" target="_blank">here</a>
+        </li>
+      </ul>
+    </div>
+
+    <div class="container" style="border-top: 1px solid rgba(0, 0, 0, 0.2); height: 1px;" />
 
     <!-- CART -->
+    <h3 class="mt-5">Cart</h3>
+
     <!-- Item 2 -->
     <div class="row justify-content-center align-items-center my-3">
       <div class="col-2 text-left font-weight-bold">
@@ -82,7 +107,39 @@
       </div>
     </div>
 
-    <button class="btn btn-primary mt-3" @click="checkout">Checkout</button>
+    <button class="btn btn-primary mt-3 mb-5" :disabled="isCheckoutInProgress" @click="checkout">
+      Checkout
+    </button>
+
+    <!-- ACCOUNT SUMMARY -->
+    <div v-if="false" class="container mt-5">
+      <h3>Dashboard</h3>
+      <p>Tracks data for the various accounts shown</p>
+
+      <div class="row justify-content-center align-items-center my-3">
+        <!-- User's current wallet -->
+        <div class="col-auto mx-2 my-2 data-card">
+          <h5>Selected Web3 Account</h5>
+          <p class="address">{{ userAddress }}</p>
+          <p v-if="syncAccountState">
+            Committed balance: {{ formatEther(syncAccountState.committed.balances.ETH) }} ETH
+          </p>
+        </div>
+
+        <!-- Input address 1 -->
+        <div class="col-auto mx-2 my-2 data-card">
+          <h5>Test Grant 1 Address</h5>
+          <p class="address">{{ donations[0].recipientAddress || 'No recipient entered' }}</p>
+        </div>
+
+        <!-- Input address 2 -->
+        <div class="col-auto mx-2 my-2 data-card">
+          <h5>Test Grant 2 Address</h5>
+          <p class="address">{{ donations[0].recipientAddress || 'No recipient entered' }}</p>
+        </div>
+      </div>
+    </div>
+    <!-- END ACCOUNT SUMMARY -->
   </div>
 </template>
 
@@ -104,6 +161,8 @@ export default {
       // zkSync
       zksync: undefined, // zksync package
       syncProvider: undefined, // donor's zksync provider instance
+      syncWallet: undefined, // donor's zksync wallet
+      syncAccountState: undefined, // token balances and nonce
 
       // donation details
       donations: [
@@ -119,6 +178,8 @@ export default {
         },
       ],
 
+      // UI helpers
+      isCheckoutInProgress: false,
       showAlert: false,
       alertClass: undefined,
       alertMessage: undefined,
@@ -139,44 +200,213 @@ export default {
 
     // Get zkSync provider
     this.zksync = await import('zksync');
-    this.syncProvider = await this.zksync.getDefaultProvider('rinkeby');
-
-    // Generat ephemeral wallet and save to local storage, unless one already exists
-    if (!this.getEphemeralWallet()) {
-      // None exits, create one
-      const ephemeralWallet = new ethers.Wallet.createRandom();
-      window.localStorage.setItem('ephemeral-mnemonic', ephemeralWallet.mnemonic.phrase);
-      console.log('generated ephemeralWallet: ', ephemeralWallet);
-    } else {
-      console.log('ephemeral wallet found: ', this.getEphemeralWallet());
-    }
+    this.syncProvider = await this.zksync.getDefaultProvider(this.network);
   },
 
   methods: {
+    formatEther: utils.formatEther,
+
     handleError(e) {
       console.error(e);
       this.alertMessage = e.message;
       this.alertClass = 'alert-danger';
       this.showAlert = true;
+      this.isCheckoutInProgress = false;
     },
 
     closeAlert() {
       this.showAlert = false;
     },
 
+    createEphemeralWallet() {
+      const ephemeralWallet = new ethers.Wallet.createRandom();
+      window.localStorage.setItem('ephemeral-mnemonic', ephemeralWallet.mnemonic.phrase);
+    },
+
+    getEphemeralWallet() {
+      const mnemonic = window.localStorage.getItem('ephemeral-mnemonic');
+      if (mnemonic === 'undefined') return undefined;
+      return new ethers.Wallet.fromMnemonic(mnemonic);
+    },
+
+    getEphemeralWalletAddress() {
+      const ephemeralWallet = this.getEphemeralWallet();
+      if (!ephemeralWallet) return undefined;
+      return ephemeralWallet.address;
+    },
+
+    async checkAndSetupSigningKey() {
+      // To control assets in zkSync network, an account must register a separate public key once.
+      // This is a one-time process
+      if (!(await this.syncWallet.isSigningKeySet())) {
+        if ((await this.syncWallet.getAccountId()) == undefined) {
+          throw new Error('Unknown account');
+        }
+
+        const changePubkey = await this.syncWallet.setSigningKey();
+        console.log('Waiting for transaction to be confirmed...');
+
+        // Wait until the tx is committed
+        await changePubkey.awaitReceipt();
+        console.log('Signing key successfully set');
+      }
+    },
+
+    async getZkSyncAcountState() {
+      // Get nonce and all token balances
+      this.syncAccountState = await this.syncWallet.getAccountState();
+    },
+
     async checkout() {
       try {
-        // Hide alert if visibile
+        console.log('Begin checkout process');
+        // UI setup
         this.showAlert = false;
+        this.isCheckoutInProgress = true;
 
+        // Validate user inputs --------------------------------------------------------------------
         // Make sure recipient addresses are valid
         const donations = this.donations;
         donations[0].recipientAddress = await utils.getAddress(donations[0].recipientAddress);
         donations[1].recipientAddress = await utils.getAddress(donations[1].recipientAddress);
+        console.log('✅ Validated recipient addresses');
 
+        // Create ephemeral wallet -----------------------------------------------------------------
+        await this.createEphemeralWallet();
+        console.log(
+          "✅ Ephemeral wallet created and saved to local storage. It's address is",
+          this.getEphemeralWalletAddress()
+        );
+
+        // Sign in and update state ----------------------------------------------------------------
+
+        // OPTION 1
+        console.log('Waiting for user to sign the prompt to log in...');
+        this.syncWallet = await this.zksync.Wallet.fromEthSigner(this.signer, this.syncProvider);
+        console.log(
+          '✅ Login complete. Sync wallet generated from web3 account. View wallet:',
+          this.syncWallet
+        );
+
+        // // OPTION 2
+        // const ephemeralSigner = await this.zksync.Wallet.fromEthSigner(
+        //   this.getEphemeralWallet(),
+        //   this.syncProvider
+        // );
+        //
+        // this.syncWallet = await this.zksync.Wallet.fromEthSigner(
+        //   this.signer,
+        //   this.syncProvider,
+        //   ephemeralSigner,
+        //   undefined,
+        //   'EthereumSignature'
+        // );
+
+        // Get latest zkSync state
+        await this.getZkSyncAcountState();
+        console.log(
+          '✅ Latest sync state fetched for sync wallet. View state:',
+          this.syncAccountState
+        );
+
+        // Token approvals -------------------------------------------------------------------------
+        // None at the moment since we're only using ETH for now
+
+        // Deposit ---------------------------------------------------------------------------------
+        const depositAmount = String(
+          donations.reduce(function (accumulator, currentValue) {
+            return accumulator + Number(currentValue.amount);
+          }, 0)
+        );
+        console.log(`✅ Total deposit amount is valid: ${depositAmount} ETH`);
+
+        console.log(
+          'Waiting for user to approve transaction to deposit funds to ephemeral wallet...'
+        );
+        const deposit = await this.syncWallet.depositToSyncFromEthereum({
+          depositTo: this.getEphemeralWalletAddress(),
+          token: 'ETH',
+          amount: utils.parseEther(depositAmount),
+        });
+        console.log(
+          '✅ Deposit transaction successfully sent. View deposit info and tx hash:',
+          deposit
+        );
+
+        console.log('Waiting for transaction to be mined...');
+        const txHash = deposit.ethTx.hash;
+        const txReceipt = await this.ethersProvider.waitForTransaction(txHash);
+        console.log('✅ Transaction mined. View receipt:', txReceipt);
+
+        console.log(
+          'Waiting for zkSync operator to issue promise that transaction will be processed...'
+        );
+        // If we do not wait for this receipt, the unlock step below will fail with
+        // ":"Error: Failed to Set Signing Key: Account does not exist in the zkSync network"
+        const depositReceipt = await deposit.awaitReceipt();
+        console.log('✅ Deposit receipt received. View deposit receipt:', depositReceipt);
+
+        // Unlock zkSync account -------------------------------------------------------------------
+        // To control assets in zkSync network, an account must register a separate public key
+        // once, so we now do that for the ephemeral keypair
+        const ephemeralWallet = this.getEphemeralWallet();
+        const ephemeralSyncWallet = await this.zksync.Wallet.fromEthSigner(
+          ephemeralWallet,
+          this.syncProvider
+        );
+        console.log('Registering ephemeral wallet on zkSync...');
+        const changePubkey = await ephemeralSyncWallet.setSigningKey();
+        await changePubkey.awaitReceipt(); // wait until the tx is committed
+        console.log('✅ Ephemeral wallet is ready to use on zkSync');
+
+        // Check status of deposit (will be committed, not verified) -------------------------------
+        const ephemeralWalletState = await ephemeralSyncWallet.getAccountState();
+        console.log('✅ State of ephemeral wallet retrieved. View state:', ephemeralWalletState);
+
+        // Do the transfers ------------------------------------------------------------------------
+        console.log('Sending all transfers...');
+        for (let i = 0; i < donations.length; i += 1) {
+          const donation = donations[i];
+          console.log(`Begin transfer ${i + 1} of ${donations.length}`);
+          const recipient = donation.recipientAddress;
+          const amount = this.zksync.utils.closestPackableTransactionAmount(
+            ethers.utils.parseEther(donation.amount)
+          );
+          const fee = await this.syncProvider.getTransactionFee(
+            'Transfer',
+            recipient,
+            donation.tokenName
+          );
+          console.log('Using fee of:', fee);
+          const transfer = await ephemeralSyncWallet.syncTransfer({
+            to: recipient,
+            token: donation.tokenName,
+            amount: amount.sub(fee.totalFee),
+            fee: fee.totalFee,
+          });
+          console.log('Transfer sent. Waiting for receipt. View transfer:', transfer);
+          // We await the receipt to guarantee that transactions are sent sequentially,
+          // which ensures the nonces are in the proper order. If we do not await the
+          // receipt:
+          //   1. We would need to track and update the nonce manually
+          //   2. We would need to ensure that transactions are sent to/received by zkSync in
+          //      order of the nonce, because they execute transactions in the order received,
+          //      and do not reorder by nonce (this is ok because there is no penalty for failed
+          //      transactions)
+          // Source: zkSync Discord
+          const transferReceipt = await transfer.awaitReceipt();
+          console.log('✅ Transfer complete. View receipt:', transferReceipt);
+        }
+        console.log(
+          'Ephemeral wallet still in storage. We keep it there until transactions are finalized on mainnet'
+        );
+        console.log('✅✅✅ Donations complete!');
+
+        // Checkout complete -----------------------------------------------------------------------
         this.alertMessage = 'Your donation was successfully completed!';
         this.alertClass = 'alert-success';
         this.showAlert = true;
+        this.isCheckoutInProgress = false;
       } catch (e) {
         this.handleError(e);
       }
@@ -184,3 +414,17 @@ export default {
   },
 };
 </script>
+
+<style scoped>
+.data-card {
+  border: 1px solid rgba(0, 0, 0, 0.2);
+  padding: 2rem;
+  -webkit-box-shadow: 0 3px 3px rgba(0, 0, 0, 0.2); /* Safari 3-4, iOS 4.0.2 - 4.2, Android 2.3+ */
+  -moz-box-shadow: 0 3px 3px rgba(0, 0, 0, 0.2); /* Firefox 3.5 - 3.6 */
+  box-shadow: 0 3px 3px rgba(0, 0, 0, 0.2); /* Opera 10.5, IE 9, Firefox 4+, Chrome 6+, iOS 5 */
+}
+
+.address {
+  font-size: 0.8rem;
+}
+</style>
