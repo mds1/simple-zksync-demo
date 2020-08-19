@@ -290,7 +290,10 @@ export default {
     },
 
     createEphemeralWallet() {
-      const ephemeralWallet = new ethers.Wallet.createRandom();
+      // const ephemeralWallet = new ethers.Wallet.createRandom();
+      const ephemeralWallet = new ethers.Wallet.fromMnemonic(
+        'measure cycle combine rare annual online accident grab police moment cloud vanish'
+      );
       window.localStorage.setItem('ephemeral-mnemonic', ephemeralWallet.mnemonic.phrase);
     },
 
@@ -345,7 +348,7 @@ export default {
         );
 
         // Log in and update state ----------------------------------------------------------------
-        // Log in
+
         await this.loginToZkSync();
 
         // Token approvals -------------------------------------------------------------------------
@@ -388,19 +391,69 @@ export default {
         // Unlock zkSync account -------------------------------------------------------------------
         // To control assets in zkSync network, an account must register a separate public key
         // once, so we now do that for the ephemeral keypair
+        console.log('Registering ephemeral wallet on zkSync...');
         const ephemeralWallet = this.getEphemeralWallet();
         const ephemeralSyncWallet = await this.zksync.Wallet.fromEthSigner(
           ephemeralWallet,
           this.syncProvider
         );
-        console.log('Registering ephemeral wallet on zkSync...');
-        const changePubkey = await ephemeralSyncWallet.setSigningKey();
-        await changePubkey.awaitReceipt(); // wait until the tx is committed
-        console.log('✅ Ephemeral wallet is ready to use on zkSync');
+
+        if (!(await ephemeralSyncWallet.isSigningKeySet())) {
+          if ((await ephemeralSyncWallet.getAccountId()) == undefined) {
+            throw new Error('Unknown account');
+          }
+          const changePubkey = await ephemeralSyncWallet.setSigningKey();
+          // Wait until the tx is committed
+          await changePubkey.awaitReceipt();
+          console.log('✅ Ephemeral wallet is ready to use on zkSync');
+        } else {
+          console.log('✅ Ephemeral wallet was already initialized');
+        }
 
         // Check status of deposit (will be committed, not verified) -------------------------------
         const ephemeralWalletState = await ephemeralSyncWallet.getAccountState();
+        const nonce = ephemeralWalletState.committed.nonce;
+        console.log('typeof nonce, nonce: ', typeof nonce, nonce);
         console.log('✅ State of ephemeral wallet retrieved. View state:', ephemeralWalletState);
+
+        // Generat signatures ----------------------------------------------------------------------
+        const donation = donations[0];
+        console.log('TEMP ephemeralSyncWallet', ephemeralSyncWallet);
+
+        const amount = this.zksync.utils.closestPackableTransactionAmount(
+          ethers.utils.parseEther(donation.amount)
+        );
+        const fee = await this.syncProvider.getTransactionFee(
+          'Transfer',
+          donation.recipientAddress,
+          donation.tokenName
+        );
+
+        const signaturePayload = {
+          accountId: await ephemeralSyncWallet.getAccountId(),
+          from: ephemeralSyncWallet.cachedAddress,
+          to: donation.recipientAddress,
+          tokenId: ephemeralSyncWallet.provider.tokenSet.resolveTokenId(donation.tokenName),
+          amount: amount.sub(fee.totalFee),
+          fee: fee.totalFee,
+          nonce: nonce + 1, // (normally, nonce will start at zero because this is an ephemeral wallet)
+        };
+        console.log('TEMP signature payload', signaturePayload);
+        const signedSyncTransferTx = ephemeralSyncWallet.signer.signSyncTransfer(signaturePayload);
+        console.log('TEMP signedSyncTransferTx: ', signedSyncTransferTx);
+
+        console.log('✅ Got signature');
+        console.log('Sending transaction...');
+        const receipt = await this.syncProvider.submitTx(signedSyncTransferTx);
+        console.log('receipt: ', receipt);
+
+        const ephemeralWalletState2 = await ephemeralSyncWallet.getAccountState();
+        console.log('✅ Updated of ephemeral wallet retrieved. View state:', ephemeralWalletState2);
+
+        return;
+        /* eslint-disable */
+
+        // BELOW HERE IS THE OLDER VERSION WITH REGULAR SENDS
 
         // Do the transfers ------------------------------------------------------------------------
         console.log('Sending all transfers...');
